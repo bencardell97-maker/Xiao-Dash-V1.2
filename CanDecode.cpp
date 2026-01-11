@@ -235,7 +235,7 @@ void h_4CD_actuator(const can_frame& f) {
 
 void h_401_headlights(const can_frame& f) {
   if (f.can_dlc >= 2) {
-    headlightsOn = (f.data[1] == 0x50);
+    headlightsOn = (f.data[1] & 0x80) != 0;
   }
 }
 }  // namespace
