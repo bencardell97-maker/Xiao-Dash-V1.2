@@ -52,6 +52,8 @@ static IPAddress g_wifiIp;
 static bool g_wifiActive = false;
 static bool g_wifiPageActive = false;
 static bool g_webServerActive = false;
+static char g_serialCommand[64];
+static size_t g_serialCommandLen = 0;
 
 bool wifiPageActive(){ return g_wifiPageActive; }
 
@@ -766,24 +768,77 @@ static void stopWifiAp(){
   g_wifiActive = false;
 }
 
-static void enterWifiPage(){
-  if(g_wifiPageActive) return;
-  g_wifiPageActive = true;
-  startWifiAp();
+static void ensureWebServerActive(){
   if(!g_webServerActive){
     setupWebServer();
     g_webServerActive = true;
   }
 }
 
-static void exitWifiPage(){
-  if(!g_wifiPageActive) return;
-  g_wifiPageActive = false;
+static void stopWebServer(){
   if(g_webServerActive){
     webServer.stop();
     g_webServerActive = false;
   }
+}
+
+static void enterWifiPage(){
+  if(g_wifiPageActive) return;
+  g_wifiPageActive = true;
+  startWifiAp();
+  ensureWebServerActive();
+}
+
+static void exitWifiPage(){
+  if(!g_wifiPageActive) return;
+  g_wifiPageActive = false;
+  stopWebServer();
   stopWifiAp();
+}
+
+static void handleSerialWifiCommand(const String& command){
+  if(command == F("wifi on")){
+    startWifiAp();
+    ensureWebServerActive();
+    Serial.print(F("WiFi AP active: "));
+    Serial.println(wifiPageUrl());
+    return;
+  }
+  if(command == F("wifi off")){
+    if(g_wifiPageActive){
+      Serial.println(F("WiFi page active; exit WiFi menu to stop."));
+      return;
+    }
+    stopWebServer();
+    stopWifiAp();
+    Serial.println(F("WiFi AP stopped."));
+    return;
+  }
+  if(command == F("wifi status")){
+    Serial.print(F("WiFi AP: "));
+    Serial.println(wifiPageUrl());
+    return;
+  }
+}
+
+static void pollSerialCommands(){
+  while(Serial.available() > 0){
+    char c = (char)Serial.read();
+    if(c == '\r') continue;
+    if(c == '\n'){
+      if(g_serialCommandLen == 0) continue;
+      g_serialCommand[g_serialCommandLen] = '\0';
+      String command = String(g_serialCommand);
+      command.trim();
+      command.toLowerCase();
+      handleSerialWifiCommand(command);
+      g_serialCommandLen = 0;
+      continue;
+    }
+    if(g_serialCommandLen + 1 < sizeof(g_serialCommand)){
+      g_serialCommand[g_serialCommandLen++] = c;
+    }
+  }
 }
 
 static void appendOption(String& html, int value, int current, const String& label){
@@ -3320,6 +3375,7 @@ inline void triggerClusterBeep(){
 
 // ===================== Setup / Loop =====================
 void setup(){
+  Serial.begin(115200);
   loadPersistState();
   resetMinMaxValues();
   g_lastBacklightPct = 255;
@@ -3360,6 +3416,7 @@ void setup(){
 
 void loop(){
   unsigned long now=millis();
+  pollSerialCommands();
   g_victronReadings = victronLoop();
   if(g_webServerActive){
     webServer.handleClient();
