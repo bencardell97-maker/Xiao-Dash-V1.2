@@ -10,6 +10,7 @@ namespace CFG {
   constexpr uint8_t TFT_CS=4, TFT_DC=5, TFT_RST=6;
   constexpr int SPI_SCK=7, SPI_MISO=8, SPI_MOSI=9;
   constexpr uint8_t CAN_CS=2, CAN_INT=3;
+  constexpr uint8_t BACKLIGHT_PWM=D0;
   constexpr CAN_SPEED CAN_SPEED_SEL = CAN_500KBPS;
   constexpr CAN_CLOCK CAN_CLOCK_SEL = MCP_8MHZ;
 

@@ -546,73 +546,51 @@ static inline bool isWarnEligible(Channel ch){
   return isGaugeAvailable(ch) && !(ch==CH_GEAR || ch==CH_LOCKUP || ch==CH_HEADLIGHTS || ch==CH_ACTUATOR);
 }
 
-// ===== UI brightness via color dimming (palette-only) =====
+// ===== UI brightness via backlight PWM =====
 static inline uint8_t uiBrightnessPct(){
   uint8_t pct = headlightsOn ? brightOn : brightOff;
   if (pct > 100) pct = 100;
   return pct;
 }
 
-static uint8_t g_lastUiDimPct = 255;
-
-static inline uint16_t dimColor565(uint16_t color, uint8_t pct){
-  if (pct >= 100) return color;
-  uint8_t r = (color >> 11) & 0x1F;
-  uint8_t g = (color >> 5)  & 0x3F;
-  uint8_t b = color & 0x1F;
-  r = (uint8_t)((r * pct + 50) / 100);
-  g = (uint8_t)((g * pct + 50) / 100);
-  b = (uint8_t)((b * pct + 50) / 100);
-  return (uint16_t)((r << 11) | (g << 5) | b);
-}
-
-static inline uint16_t uiDim(uint16_t color){
-  return dimColor565(color, uiBrightnessPct());
-}
-
-static inline void syncUiDimming(){
-  uint8_t pct = uiBrightnessPct();
-  if (pct == g_lastUiDimPct) return;
-  g_lastUiDimPct = pct;
-  redrawForDimmingChange();
-}
+static uint8_t g_lastBacklightPct = 255;
 
 // Palette accessors
 uint16_t COL_BG(){
-  if (isCustomPaletteIndex(paletteIndex)) return uiDim(persist.customPalettes[customPaletteSlot(paletteIndex)].bg);
-  return uiDim(PALETTES[paletteIndex].bg);
+  if (isCustomPaletteIndex(paletteIndex)) return persist.customPalettes[customPaletteSlot(paletteIndex)].bg;
+  return PALETTES[paletteIndex].bg;
 }
 uint16_t COL_CARD(){
-  if (isCustomPaletteIndex(paletteIndex)) return uiDim(persist.customPalettes[customPaletteSlot(paletteIndex)].card);
-  return uiDim(PALETTES[paletteIndex].card);
+  if (isCustomPaletteIndex(paletteIndex)) return persist.customPalettes[customPaletteSlot(paletteIndex)].card;
+  return PALETTES[paletteIndex].card;
 }
 uint16_t COL_FRAME(){
-  if (isCustomPaletteIndex(paletteIndex)) return uiDim(persist.customPalettes[customPaletteSlot(paletteIndex)].frame);
-  return uiDim(PALETTES[paletteIndex].frame);
+  if (isCustomPaletteIndex(paletteIndex)) return persist.customPalettes[customPaletteSlot(paletteIndex)].frame;
+  return PALETTES[paletteIndex].frame;
 }
 uint16_t COL_TICKS(){
-  if (isCustomPaletteIndex(paletteIndex)) return uiDim(persist.customPalettes[customPaletteSlot(paletteIndex)].ticks);
-  return uiDim(PALETTES[paletteIndex].ticks);
+  if (isCustomPaletteIndex(paletteIndex)) return persist.customPalettes[customPaletteSlot(paletteIndex)].ticks;
+  return PALETTES[paletteIndex].ticks;
 }
 uint16_t COL_TXT(){
-  if (isCustomPaletteIndex(paletteIndex)) return uiDim(persist.customPalettes[customPaletteSlot(paletteIndex)].text);
-  return uiDim(PALETTES[paletteIndex].text);
+  if (isCustomPaletteIndex(paletteIndex)) return persist.customPalettes[customPaletteSlot(paletteIndex)].text;
+  return PALETTES[paletteIndex].text;
 }
 uint16_t COL_ACCENT(){
-  if (isCustomPaletteIndex(paletteIndex)) return uiDim(persist.customPalettes[customPaletteSlot(paletteIndex)].accent);
-  return uiDim(PALETTES[paletteIndex].accent);
+  if (isCustomPaletteIndex(paletteIndex)) return persist.customPalettes[customPaletteSlot(paletteIndex)].accent;
+  return PALETTES[paletteIndex].accent;
 }
 uint16_t COL_YELLOW(){
-  if (isCustomPaletteIndex(paletteIndex)) return uiDim(ILI9341_YELLOW);
-  return uiDim(PALETTES[paletteIndex].yellow);
+  if (isCustomPaletteIndex(paletteIndex)) return ILI9341_YELLOW;
+  return PALETTES[paletteIndex].yellow;
 }
 uint16_t COL_ORANGE(){
-  if (isCustomPaletteIndex(paletteIndex)) return uiDim(0xFD20);
-  return uiDim(PALETTES[paletteIndex].orange);
+  if (isCustomPaletteIndex(paletteIndex)) return 0xFD20;
+  return PALETTES[paletteIndex].orange;
 }
 uint16_t COL_RED(){
-  if (isCustomPaletteIndex(paletteIndex)) return uiDim(ILI9341_RED);
-  return uiDim(PALETTES[paletteIndex].red);
+  if (isCustomPaletteIndex(paletteIndex)) return ILI9341_RED;
+  return PALETTES[paletteIndex].red;
 }
 
 // ===================== Helpers =====================
@@ -632,11 +610,11 @@ const char* tcStateText(TCState s) {
 }
 
 uint16_t tcStateColor(TCState s) {
-  if (s == TC_Applying)  return uiDim(ILI9341_CYAN);              // or your INFO color
-  if (s == TC_Releasing) return uiDim(ILI9341_CYAN);              // or AMBER
-  if (s == TC_Full)      return uiDim(ILI9341_GREEN);
-  if (s == TC_Flex)      return uiDim(ILI9341_CYAN);
-  return uiDim(RGB565(160,160,160));                              // Unlocked
+  if (s == TC_Applying)  return ILI9341_CYAN;              // or your INFO color
+  if (s == TC_Releasing) return ILI9341_CYAN;              // or AMBER
+  if (s == TC_Full)      return ILI9341_GREEN;
+  if (s == TC_Flex)      return ILI9341_CYAN;
+  return RGB565(160,160,160);                              // Unlocked
 }
 
 static inline void copyStringToBuffer(const String& src, char* dest, size_t maxLen){
@@ -1414,9 +1392,13 @@ static void loadPersistState(){
   ensureVictronDefaults();
 }
 
-// ===================== Backlight helpers (palette dimming) =====================
+// ===================== Backlight helpers (PWM on D0, active high) =====================
 inline void applyBacklight(){
-  syncUiDimming();
+  uint8_t pct = uiBrightnessPct();
+  if (pct == g_lastBacklightPct) return;
+  g_lastBacklightPct = pct;
+  uint16_t duty = (uint16_t)((pct * 255 + 50) / 100);
+  analogWrite(CFG::BACKLIGHT_PWM, duty);
 }
 
 // ===================== Drawing – Main UI =====================
@@ -2636,7 +2618,7 @@ void showFactoryResetConfirm(bool full /*=true*/) {
   }
 }
 
-// ===== UI redraw for brightness-based dimming =====
+// ===== UI redraw for palette changes =====
 void redrawForDimmingChange(){
   switch(menuState){
     case UI_MAIN: {
@@ -3340,11 +3322,13 @@ inline void triggerClusterBeep(){
 void setup(){
   loadPersistState();
   resetMinMaxValues();
-  g_lastUiDimPct = uiBrightnessPct();
+  g_lastBacklightPct = 255;
 
   // Ensure CS lines idle high before SPI
   pinMode(CFG::TFT_CS,OUTPUT); digitalWrite(CFG::TFT_CS,HIGH);
   pinMode(CFG::CAN_CS,OUTPUT); digitalWrite(CFG::CAN_CS,HIGH);
+  pinMode(CFG::BACKLIGHT_PWM, OUTPUT);
+  analogWrite(CFG::BACKLIGHT_PWM, 0);
 
   SPI.begin(CFG::SPI_SCK,CFG::SPI_MISO,CFG::SPI_MOSI); SPI.setFrequency(TFT_SPI_HZ);
 
@@ -3356,7 +3340,7 @@ void setup(){
   renderStatic();
   renderDynamic();
 
-  // After first frame is ready, apply palette dimming
+  // After first frame is ready, apply backlight PWM
   brightOn  = max<uint8_t>(brightOn,  MIN_BRIGHT);
   brightOff = max<uint8_t>(brightOff, MIN_BRIGHT);
   applyBacklight();
