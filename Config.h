@@ -3,17 +3,16 @@
 #include <Arduino.h>
 #include <mcp2515.h>
 
-
-//===============Custom breadboard and mcp2515================
+//=====================Xiao Can Expansion Board 2 =================
 // ===================== Config / CAN IDs =====================
 namespace CFG {
-  constexpr uint8_t TFT_CS=4, TFT_DC=5, TFT_RST=6;
-  constexpr int SPI_SCK=7, SPI_MISO=8, SPI_MOSI=9;
-  constexpr uint8_t CAN_CS=2, CAN_INT=3;
+  constexpr uint8_t TFT_CS= D1, TFT_DC= D3, TFT_RST= D2;
+  constexpr int SPI_SCK= D8, SPI_MISO= D9, SPI_MOSI= D10;
+  constexpr uint8_t CAN_CS= D7, CAN_INT= D6;
   constexpr uint8_t BACKLIGHT_PWM=D0;
   constexpr CAN_SPEED CAN_SPEED_SEL = CAN_500KBPS;
-  constexpr CAN_CLOCK CAN_CLOCK_SEL = MCP_8MHZ;
-
+  constexpr CAN_CLOCK CAN_CLOCK_SEL = MCP_16MHZ;
+  
   // Core frames
   constexpr uint32_t ID_SPEED=0x141, ID_RPM_SPEED=0x160, ID_TRANS_T=0x050, ID_GEAR_LOCK=0x161;
   constexpr uint32_t ID_BATTV=0x4A3, ID_COOLANT_ETC=0x2C0, ID_TORQUE=0x150, ID_SWBTN=0x402;
@@ -26,7 +25,7 @@ namespace CFG {
   constexpr uint32_t ID_MAP_T=0x4CC;       // [1]=turbo out (raw-40), [7]=manifold (raw-40)
   constexpr uint32_t ID_LAMBDA=0x4B2;      // bytes 1-2 (raw/1000)
   constexpr uint32_t ID_ACTUATOR=0x4CD;    // byte 3 (raw)
-  constexpr uint32_t ID_HEADLIGHTS=0x401;  // byte 1 (0x80 on)
+  constexpr uint32_t ID_HEADLIGHTS=0x401;  // byte 1 (0x50 on)
 
   constexpr uint32_t SCREEN_REFRESH_MS=100;
 

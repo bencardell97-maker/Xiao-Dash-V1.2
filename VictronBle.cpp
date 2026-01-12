@@ -38,9 +38,9 @@ extern const uint8_t* victronConfigOrionKey();
 namespace {
 constexpr uint16_t kVictronCompanyId = 0x02E1;
 constexpr uint8_t kVictronRecordInstant = 0x10;
-constexpr uint32_t kVictronStaleMs = 60000;
+constexpr uint32_t kVictronStaleMs = 20000;
 constexpr uint16_t kBleScanInterval = 160;
-constexpr uint16_t kBleScanWindow = 160;
+constexpr uint16_t kBleScanWindow = 120;
 
 struct VictronDevCfg {
   const char* name;

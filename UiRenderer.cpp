@@ -204,7 +204,7 @@ static void drawGridStatic(){
 
 static void fmtValueForTitle(Channel ch, char* out, size_t n){
   if(ch==CH_BATTV) {
-    snprintf(out, n, "%.2f %s", battV, unitLabel(ch));
+    snprintf(out, n, "%.1f %s", battV, unitLabel(ch));
   } else if(ch==CH_LAMBDA){
     float v = valueDisplay(CH_LAMBDA);
     if(g_uLambda==U_L_lambda) snprintf(out,n,"%.2f %s", v, unitLabel(ch));
@@ -390,7 +390,7 @@ static void refreshPillsDynamic(){
     }
     else {
       if (regenState == REGEN_PAUSED) {
-        setTitleIfChanged("REGEN PAUSED", COL_TXT());
+        setTitleIfChanged("REGEN INCOMPLETE", COL_TXT());
       } else if (regenState == REGEN_ACTIVE) {
         setTitleIfChanged("REGEN ACTIVE", COL_TXT());
       } else {

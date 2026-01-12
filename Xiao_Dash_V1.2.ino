@@ -52,8 +52,6 @@ static IPAddress g_wifiIp;
 static bool g_wifiActive = false;
 static bool g_wifiPageActive = false;
 static bool g_webServerActive = false;
-static char g_serialCommand[64];
-static size_t g_serialCommandLen = 0;
 
 bool wifiPageActive(){ return g_wifiPageActive; }
 
@@ -323,7 +321,7 @@ uint8_t brightSel = 0;   // 0=Lights On, 1=Lights Off
 bool    brightEditing = false;
 unsigned long brightBlinkMs = 0; bool brightBlinkOn = true;
 
-constexpr uint8_t MIN_BRIGHT = 10; // minimum allowed %
+constexpr uint8_t MIN_BRIGHT = 1; // minimum allowed %
 // Speed Trim (RAM copy; persisted in 'persist.speedTrimPct')
 float speedTrimPct = 0.0f;
 static const float SPEED_TRIM_MIN = -20.0f;
@@ -356,7 +354,7 @@ Channel currentPillChannel(uint8_t slot){ return (Channel)persist.pillChannel[pe
 // Labels (base)
 static const char* LBL_BASE[CH__COUNT]={
   "Soot %","Speed","RPM","Coolant","Trans 1","Trans 2","Oil kPa",
-  "Battery V","Gear","Converter","Torque","Pedal %","Demand %",
+  "Battery","Gear","Converter","Torque","Pedal %","TQ Demand %",
   "EGT 1","EGT 2","Boost","Manifold 2","Manifold 1","Lambda","Intake T","Fuel T",
   "Turbo %","Headlights","Aux Batt %","Aux Batt A","Time Rem","Aux Batt V",
   "DCDC Out A","DCDC Out V","DCDC In V",
@@ -768,77 +766,24 @@ static void stopWifiAp(){
   g_wifiActive = false;
 }
 
-static void ensureWebServerActive(){
+static void enterWifiPage(){
+  if(g_wifiPageActive) return;
+  g_wifiPageActive = true;
+  startWifiAp();
   if(!g_webServerActive){
     setupWebServer();
     g_webServerActive = true;
   }
 }
 
-static void stopWebServer(){
+static void exitWifiPage(){
+  if(!g_wifiPageActive) return;
+  g_wifiPageActive = false;
   if(g_webServerActive){
     webServer.stop();
     g_webServerActive = false;
   }
-}
-
-static void enterWifiPage(){
-  if(g_wifiPageActive) return;
-  g_wifiPageActive = true;
-  startWifiAp();
-  ensureWebServerActive();
-}
-
-static void exitWifiPage(){
-  if(!g_wifiPageActive) return;
-  g_wifiPageActive = false;
-  stopWebServer();
   stopWifiAp();
-}
-
-static void handleSerialWifiCommand(const String& command){
-  if(command == F("wifi on")){
-    startWifiAp();
-    ensureWebServerActive();
-    Serial.print(F("WiFi AP active: "));
-    Serial.println(wifiPageUrl());
-    return;
-  }
-  if(command == F("wifi off")){
-    if(g_wifiPageActive){
-      Serial.println(F("WiFi page active; exit WiFi menu to stop."));
-      return;
-    }
-    stopWebServer();
-    stopWifiAp();
-    Serial.println(F("WiFi AP stopped."));
-    return;
-  }
-  if(command == F("wifi status")){
-    Serial.print(F("WiFi AP: "));
-    Serial.println(wifiPageUrl());
-    return;
-  }
-}
-
-static void pollSerialCommands(){
-  while(Serial.available() > 0){
-    char c = (char)Serial.read();
-    if(c == '\r') continue;
-    if(c == '\n'){
-      if(g_serialCommandLen == 0) continue;
-      g_serialCommand[g_serialCommandLen] = '\0';
-      String command = String(g_serialCommand);
-      command.trim();
-      command.toLowerCase();
-      handleSerialWifiCommand(command);
-      g_serialCommandLen = 0;
-      continue;
-    }
-    if(g_serialCommandLen + 1 < sizeof(g_serialCommand)){
-      g_serialCommand[g_serialCommandLen++] = c;
-    }
-  }
 }
 
 static void appendOption(String& html, int value, int current, const String& label){
@@ -2401,7 +2346,7 @@ void showUnitsPage(bool full=true){
 }
 // ---- WiFi page ----
 static inline void drawWifiRow(int row, bool sel){
-  const char* left = (row==0) ? "SSID" : (row==1) ? "Password" : "Config URL";
+  const char* left = (row==0) ? "SSID" : (row==1) ? "Password" : "URL";
   String rightStr;
   if(row==0) rightStr = String(persist.wifiSsid);
   else if(row==1) rightStr = String(persist.wifiPass);
@@ -3375,7 +3320,6 @@ inline void triggerClusterBeep(){
 
 // ===================== Setup / Loop =====================
 void setup(){
-  Serial.begin(115200);
   loadPersistState();
   resetMinMaxValues();
   g_lastBacklightPct = 255;
@@ -3416,7 +3360,6 @@ void setup(){
 
 void loop(){
   unsigned long now=millis();
-  pollSerialCommands();
   g_victronReadings = victronLoop();
   if(g_webServerActive){
     webServer.handleClient();
