@@ -368,7 +368,7 @@ const char* unitLabel(Channel ch){
     case CH_BATTV2: return "V";
     case CH_BATT_SOC: return "%";
     case CH_BATT_CURR: return "A";
-    case CH_BATT_TTG: return "min";
+    case CH_BATT_TTG: return "";
     case CH_DCDC_OUT_A: return "A";
     case CH_DCDC_OUT_V: return "V";
     case CH_DCDC_IN_V: return "V";
@@ -1588,6 +1588,26 @@ inline void updateMinMaxValues(){
   }
 }
 
+static void formatTimeRemainingMinutes(float minutes, char* out, size_t outSize){
+  if(!isfinite(minutes) || minutes < 0.0f){
+    snprintf(out, outSize, "--");
+    return;
+  }
+  long totalMinutes = lroundf(minutes);
+  if(totalMinutes < 0) totalMinutes = 0;
+  long days = totalMinutes / (60 * 24);
+  long hours = (totalMinutes / 60) % 24;
+  long mins = totalMinutes % 60;
+
+  if(days > 0){
+    snprintf(out, outSize, "%ldd%ldh%ldm", days, hours, mins);
+  } else if(hours > 0){
+    snprintf(out, outSize, "%ldh%ldm", hours, mins);
+  } else {
+    snprintf(out, outSize, "%ldm", mins);
+  }
+}
+
 void formatDisplayValue(Channel ch, float displayValue, char* out, size_t outSize){
   if((ch == CH_BATT_SOC || ch == CH_BATT_CURR || ch == CH_BATT_TTG || ch == CH_BATTV2
       || ch == CH_DCDC_OUT_A || ch == CH_DCDC_OUT_V || ch == CH_DCDC_IN_V
@@ -1598,6 +1618,8 @@ void formatDisplayValue(Channel ch, float displayValue, char* out, size_t outSiz
   }
   if(ch == CH_BATTV){
     snprintf(out, outSize, "%.1f", displayValue);
+  } else if(ch == CH_BATT_TTG){
+    formatTimeRemainingMinutes(displayValue, out, outSize);
   } else if(ch == CH_BATTV2){
     snprintf(out, outSize, "%.2f", displayValue);
   } else if(ch == CH_BATT_CURR || ch == CH_DCDC_OUT_A || ch == CH_PV_AMPS){
