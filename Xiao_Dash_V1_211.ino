@@ -30,6 +30,11 @@
   #define RGB565(r,g,b) ( (((r)&0xF8)<<8) | (((g)&0xFC)<<3) | ((b)>>3) )
 #endif
 
+// ===================== Debug =====================
+#ifndef DEBUG_BUTTONS
+  #define DEBUG_BUTTONS 1
+#endif
+
 // Forward declarations for functions referenced before their definitions
 void redrawForDimmingChange();
 // ==== CAN Sniffer: forward declarations ====
@@ -37,6 +42,51 @@ void showCanSniff(bool full = true);
 void drawSniffRow(uint8_t row, bool sel, bool blinkHide=false);
 void drawSniffLive();
 void snifferMaybeCapture(const can_frame& f);
+
+#if DEBUG_BUTTONS
+static const char* btnName(Btn b){
+  switch(b){
+    case BTN_UP: return "UP";
+    case BTN_DOWN: return "DOWN";
+    case BTN_LEFT: return "LEFT";
+    case BTN_RIGHT: return "RIGHT";
+    case BTN_ENTER: return "ENTER";
+    case BTN_CANCEL: return "CANCEL";
+    default: return "NONE";
+  }
+}
+
+static void logButtonEvent(const char* tag, Btn b){
+  Serial.print("[BTN] ");
+  Serial.print(tag);
+  Serial.print(" btn=");
+  Serial.print(btnName(b));
+  Serial.print(" menuState=");
+  Serial.println(menuState);
+}
+
+static void logButtonFrame(const can_frame& f, bool cancel_now, bool up_now, bool down_now, bool left, bool right, bool enter){
+  Serial.print("[BTN] frame id=0x");
+  Serial.print(f.can_id, HEX);
+  Serial.print(" data=");
+  for(uint8_t i=0;i<f.can_dlc && i<8;i++){
+    if(i) Serial.print(' ');
+    Serial.print(f.data[i], HEX);
+  }
+  Serial.print(" states c/u/d/l/r/e=");
+  Serial.print(cancel_now);
+  Serial.print('/');
+  Serial.print(up_now);
+  Serial.print('/');
+  Serial.print(down_now);
+  Serial.print('/');
+  Serial.print(left);
+  Serial.print('/');
+  Serial.print(right);
+  Serial.print('/');
+  Serial.println(enter);
+}
+#endif
 
 //=====================Xiao Can Expansion Board =================
 
@@ -2428,6 +2478,9 @@ constexpr uint32_t ENTER_HOLD_MS = 2000;
 
 // Buttons (edge detect)
 static bool sw_up_prev=false, sw_down_prev=false, sw_left_prev=false, sw_right_prev=false, sw_enter_prev=false;
+#if DEBUG_BUTTONS
+static bool sw_cancel_prev=false;
+#endif
 
 inline bool bitSetSafe(const can_frame& f,uint8_t byteIdx,uint8_t bit){ if(bit>7||f.can_dlc<=byteIdx) return false; return (f.data[byteIdx]&(1u<<bit))!=0; }
 
@@ -2715,6 +2768,9 @@ void redrawForDimmingChange(){
 
 // ===================== Buttons handler and nav =====================
 void handleButton(Btn b){
+#if DEBUG_BUTTONS
+  logButtonEvent("handle", b);
+#endif
   switch(menuState){
 
     case MENU_ROOT:{
@@ -3187,11 +3243,21 @@ void updateButtonsFromFrame(const can_frame& f){
   down_now = bitSetSafe(f,6,0);
   bool left = bitSetSafe(f,7,4), right=bitSetSafe(f,7,2), enter=bitSetSafe(f,7,6);
 
+#if DEBUG_BUTTONS
+  if(cancel_now != sw_cancel_prev || up_now != sw_up_prev || down_now != sw_down_prev || left != sw_left_prev
+     || right != sw_right_prev || enter != sw_enter_prev){
+    logButtonFrame(f, cancel_now, up_now, down_now, left, right, enter);
+  }
+#endif
+
   // Press & hold (2s) enter/exit Settings WHILE holding
   if(cancel_now && !sw_cancel_pressed){ sw_cancel_pressed=true; sw_cancel_t0=millis(); }
   if(cancel_now && sw_cancel_pressed){
     if(millis()-sw_cancel_t0 >= 2000){
       sw_cancel_pressed=false;
+#if DEBUG_BUTTONS
+      Serial.println("[BTN] cancel hold -> toggle settings");
+#endif
       if(inSettings()) navExitSettings(); else navEnterSettings();
       cancelTapCount=0; suppressNextCancelRelease=true; return;
     }
@@ -3206,6 +3272,10 @@ void updateButtonsFromFrame(const can_frame& f){
 
     // if(held < 2000) {
     if (inSettings()) {
+#if DEBUG_BUTTONS
+      Serial.print("[BTN] cancel release in settings held_ms=");
+      Serial.println(held);
+#endif
       handleButton(BTN_CANCEL); // Back via Cancel inside menus
     } else {
       unsigned long now = millis();
@@ -3215,6 +3285,10 @@ void updateButtonsFromFrame(const can_frame& f){
       } else {
         if (now - lastCancelTapMs <= DOUBLE_TAP_MS) {
           // Go to next screen
+#if DEBUG_BUTTONS
+          Serial.print("[BTN] cancel double-tap -> next screen held_ms=");
+          Serial.println(held);
+#endif
           persist.currentScreen = (persist.currentScreen + 1) % SCREEN_COUNT;       //  No. of screen in rotation
           dirty = true;
 
@@ -3247,6 +3321,9 @@ void updateButtonsFromFrame(const can_frame& f){
     if(enter && sw_enter_pressed){
       if(!uiMinMaxActive && (millis() - sw_enter_t0 >= ENTER_HOLD_MS)){
         setMinMaxActive(true);
+#if DEBUG_BUTTONS
+        Serial.println("[BTN] enter hold -> min/max on");
+#endif
         enterTapCount = 0;
         suppressNextEnterRelease = true;
       }
@@ -3255,6 +3332,9 @@ void updateButtonsFromFrame(const can_frame& f){
       sw_enter_pressed = false;
       if(uiMinMaxActive){
         setMinMaxActive(false);
+#if DEBUG_BUTTONS
+        Serial.println("[BTN] enter release -> min/max off");
+#endif
         suppressNextEnterRelease = true;
       }
       if(suppressNextEnterRelease){
@@ -3268,6 +3348,9 @@ void updateButtonsFromFrame(const can_frame& f){
           enterTapCount++;
           lastEnterTapMs = now;
           if(enterTapCount >= 3){
+#if DEBUG_BUTTONS
+            Serial.println("[BTN] enter triple-tap -> reset min/max");
+#endif
             resetMinMaxValues();
             enterTapCount = 0;
           }
@@ -3288,6 +3371,9 @@ void updateButtonsFromFrame(const can_frame& f){
   if(right && !sw_right_prev) handleButton(BTN_RIGHT);
   if(enter && !sw_enter_prev) handleButton(BTN_ENTER);
   sw_up_prev=up_now; sw_down_prev=down_now; sw_left_prev=left; sw_right_prev=right; sw_enter_prev=enter;
+#if DEBUG_BUTTONS
+  sw_cancel_prev = cancel_now;
+#endif
 }
 
 // ===================== Regen banner =====================
@@ -3341,6 +3427,14 @@ inline void triggerClusterBeep(){
 
 // ===================== Setup / Loop =====================
 void setup(){
+#if DEBUG_BUTTONS
+  Serial.begin(115200);
+  unsigned long serialStart = millis();
+  while(!Serial && (millis() - serialStart < 2000)){
+    delay(10);
+  }
+  Serial.println("[BTN] Serial button debugging enabled");
+#endif
   loadPersistState();
   resetMinMaxValues();
   g_lastBacklightPct = 255;
