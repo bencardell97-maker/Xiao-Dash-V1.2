@@ -15,6 +15,7 @@
 #include "DashTypes.h"
 #include "Persist.h"
 #include "Config.h"
+#include "CanDecode.h"
 #include "UiRenderer.h"
 #include "ValueConversion.h"
 #include "VictronBle.h"
@@ -30,6 +31,11 @@
   #define RGB565(r,g,b) ( (((r)&0xF8)<<8) | (((g)&0xFC)<<3) | ((b)>>3) )
 #endif
 
+// ===================== Debug =====================
+#ifndef DEBUG_BUTTONS
+  #define DEBUG_BUTTONS 1
+#endif
+
 // Forward declarations for functions referenced before their definitions
 void redrawForDimmingChange();
 // ==== CAN Sniffer: forward declarations ====
@@ -38,10 +44,13 @@ void drawSniffRow(uint8_t row, bool sel, bool blinkHide=false);
 void drawSniffLive();
 void snifferMaybeCapture(const can_frame& f);
 
-//=====================Xiao Can Expansion Board =================
+#if DEBUG_BUTTONS
+static const char* btnName(Btn b);
+static void logButtonEvent(const char* tag, Btn b);
+static void logButtonFrame(const can_frame& f, bool cancel_now, bool up_now, bool down_now, bool left, bool right, bool enter);
+#endif
 
-// === Bring in CAN decoder (expects CFG above) ===
-#include "CanDecode.h"
+//=====================Xiao Can Expansion Board =================
 
 // ===================== Hardware =====================
 Adafruit_ILI9341 tft(CFG::TFT_CS, CFG::TFT_DC, CFG::TFT_RST);
@@ -80,6 +89,51 @@ unsigned long lastMillis=0, lastDraw=0;
 // ===================== UI state & persistence =====================
 MenuState menuState = UI_MAIN;
 bool inSettings() { return menuState != UI_MAIN; }
+
+#if DEBUG_BUTTONS
+static const char* btnName(Btn b){
+  switch(b){
+    case BTN_UP: return "UP";
+    case BTN_DOWN: return "DOWN";
+    case BTN_LEFT: return "LEFT";
+    case BTN_RIGHT: return "RIGHT";
+    case BTN_ENTER: return "ENTER";
+    case BTN_CANCEL: return "CANCEL";
+    default: return "NONE";
+  }
+}
+
+static void logButtonEvent(const char* tag, Btn b){
+  Serial.print("[BTN] ");
+  Serial.print(tag);
+  Serial.print(" btn=");
+  Serial.print(btnName(b));
+  Serial.print(" menuState=");
+  Serial.println(static_cast<uint8_t>(menuState));
+}
+
+static void logButtonFrame(const can_frame& f, bool cancel_now, bool up_now, bool down_now, bool left, bool right, bool enter){
+  Serial.print("[BTN] frame id=0x");
+  Serial.print(f.can_id, HEX);
+  Serial.print(" data=");
+  for(uint8_t i=0;i<f.can_dlc && i<8;i++){
+    if(i) Serial.print(' ');
+    Serial.print(f.data[i], HEX);
+  }
+  Serial.print(" states c/u/d/l/r/e=");
+  Serial.print(cancel_now);
+  Serial.print('/');
+  Serial.print(up_now);
+  Serial.print('/');
+  Serial.print(down_now);
+  Serial.print('/');
+  Serial.print(left);
+  Serial.print('/');
+  Serial.print(right);
+  Serial.print('/');
+  Serial.println(enter);
+}
+#endif
 
 // ===== Main-UI warnings state & blink =====
 unsigned long uiWarnBlinkMs = 0;
@@ -2410,7 +2464,6 @@ void updateUnitsSel(uint8_t prev, uint8_t now){
 // ===================== Input handling & navigation =====================
 static bool sw_cancel_pressed=false;
 static unsigned long sw_cancel_t0=0;
-static bool suppressNextCancelRelease=false;
 static bool sw_enter_pressed=false;
 static unsigned long sw_enter_t0=0;
 static bool suppressNextEnterRelease=false;
@@ -2428,6 +2481,9 @@ constexpr uint32_t ENTER_HOLD_MS = 2000;
 
 // Buttons (edge detect)
 static bool sw_up_prev=false, sw_down_prev=false, sw_left_prev=false, sw_right_prev=false, sw_enter_prev=false;
+#if DEBUG_BUTTONS
+static bool sw_cancel_prev=false;
+#endif
 
 inline bool bitSetSafe(const can_frame& f,uint8_t byteIdx,uint8_t bit){ if(bit>7||f.can_dlc<=byteIdx) return false; return (f.data[byteIdx]&(1u<<bit))!=0; }
 
@@ -2715,6 +2771,9 @@ void redrawForDimmingChange(){
 
 // ===================== Buttons handler and nav =====================
 void handleButton(Btn b){
+#if DEBUG_BUTTONS
+  logButtonEvent("handle", b);
+#endif
   switch(menuState){
 
     case MENU_ROOT:{
@@ -3187,52 +3246,69 @@ void updateButtonsFromFrame(const can_frame& f){
   down_now = bitSetSafe(f,6,0);
   bool left = bitSetSafe(f,7,4), right=bitSetSafe(f,7,2), enter=bitSetSafe(f,7,6);
 
-  // Press & hold (2s) enter/exit Settings WHILE holding
-  if(cancel_now && !sw_cancel_pressed){ sw_cancel_pressed=true; sw_cancel_t0=millis(); }
-  if(cancel_now && sw_cancel_pressed){
-    if(millis()-sw_cancel_t0 >= 2000){
-      sw_cancel_pressed=false;
-      if(inSettings()) navExitSettings(); else navEnterSettings();
-      cancelTapCount=0; suppressNextCancelRelease=true; return;
+#if DEBUG_BUTTONS
+  if(cancel_now != sw_cancel_prev || up_now != sw_up_prev || down_now != sw_down_prev || left != sw_left_prev
+     || right != sw_right_prev || enter != sw_enter_prev){
+    logButtonFrame(f, cancel_now, up_now, down_now, left, right, enter);
+  }
+#endif
+
+  // Press & hold (2s) enter Settings WHILE holding (main UI only)
+  if(!inSettings()){
+    if(cancel_now && !sw_cancel_pressed){ sw_cancel_pressed=true; sw_cancel_t0=millis(); }
+    if(cancel_now && sw_cancel_pressed){
+      if(millis()-sw_cancel_t0 >= 2000){
+        sw_cancel_pressed=false;
+#if DEBUG_BUTTONS
+        Serial.println("[BTN] cancel hold -> toggle settings");
+#endif
+        navEnterSettings();
+        cancelTapCount=0;
+        return;
+      }
+    }
+  } else {
+    sw_cancel_pressed = false;
+  }
+
+  // Cancel actions on rising edge
+  if(cancel_now && !sw_cancel_prev){
+    if(inSettings()){
+#if DEBUG_BUTTONS
+      Serial.println("[BTN] cancel press in settings");
+#endif
+      handleButton(BTN_CANCEL); // Back via Cancel inside menus
+    } else {
+      // Double-tap (live UI) triggers on rising edge
+      unsigned long now = millis();
+      if (cancelTapCount == 0) {
+        cancelTapCount = 1;
+        lastCancelTapMs = now;
+      } else if (now - lastCancelTapMs <= DOUBLE_TAP_MS) {
+#if DEBUG_BUTTONS
+        Serial.println("[BTN] cancel double-tap -> next screen");
+#endif
+        persist.currentScreen = (persist.currentScreen + 1) % SCREEN_COUNT;       //  No. of screen in rotation
+        dirty = true;
+
+        // Redraw chrome
+        tft.fillScreen(COL_BG());
+        drawAppBar();
+
+        updateRegenState();
+        renderStatic();
+        renderDynamic();
+
+        cancelTapCount = 0;
+      } else {
+        cancelTapCount = 1;
+        lastCancelTapMs = now;
+      }
     }
   }
 
-  // Short-press release handling (double-tap only in live UI)
   if(!cancel_now && sw_cancel_pressed){
-    unsigned long held=millis()-sw_cancel_t0;
     sw_cancel_pressed=false;
-
-    if(suppressNextCancelRelease){ suppressNextCancelRelease=false; return; }
-
-    // if(held < 2000) {
-    if (inSettings()) {
-      handleButton(BTN_CANCEL); // Back via Cancel inside menus
-    } else {
-      unsigned long now = millis();
-      if (cancelTapCount == 0) {
-        cancelTapCount = 1; 
-        lastCancelTapMs = now;
-      } else {
-        if (now - lastCancelTapMs <= DOUBLE_TAP_MS) {
-          // Go to next screen
-          persist.currentScreen = (persist.currentScreen + 1) % SCREEN_COUNT;       //  No. of screen in rotation
-          dirty = true;
-
-          // Redraw chrome
-          tft.fillScreen(COL_BG());
-          drawAppBar();
-
-          updateRegenState();
-          renderStatic();
-          renderDynamic();
-
-          cancelTapCount = 0;
-        } else {
-          cancelTapCount = 1; 
-          lastCancelTapMs = now;
-        }
-      }
-    }
   }
 
   // Expire single tap window
@@ -3247,6 +3323,9 @@ void updateButtonsFromFrame(const can_frame& f){
     if(enter && sw_enter_pressed){
       if(!uiMinMaxActive && (millis() - sw_enter_t0 >= ENTER_HOLD_MS)){
         setMinMaxActive(true);
+#if DEBUG_BUTTONS
+        Serial.println("[BTN] enter hold -> min/max on");
+#endif
         enterTapCount = 0;
         suppressNextEnterRelease = true;
       }
@@ -3255,6 +3334,9 @@ void updateButtonsFromFrame(const can_frame& f){
       sw_enter_pressed = false;
       if(uiMinMaxActive){
         setMinMaxActive(false);
+#if DEBUG_BUTTONS
+        Serial.println("[BTN] enter release -> min/max off");
+#endif
         suppressNextEnterRelease = true;
       }
       if(suppressNextEnterRelease){
@@ -3268,6 +3350,9 @@ void updateButtonsFromFrame(const can_frame& f){
           enterTapCount++;
           lastEnterTapMs = now;
           if(enterTapCount >= 3){
+#if DEBUG_BUTTONS
+            Serial.println("[BTN] enter triple-tap -> reset min/max");
+#endif
             resetMinMaxValues();
             enterTapCount = 0;
           }
@@ -3288,6 +3373,9 @@ void updateButtonsFromFrame(const can_frame& f){
   if(right && !sw_right_prev) handleButton(BTN_RIGHT);
   if(enter && !sw_enter_prev) handleButton(BTN_ENTER);
   sw_up_prev=up_now; sw_down_prev=down_now; sw_left_prev=left; sw_right_prev=right; sw_enter_prev=enter;
+#if DEBUG_BUTTONS
+  sw_cancel_prev = cancel_now;
+#endif
 }
 
 // ===================== Regen banner =====================
@@ -3341,6 +3429,14 @@ inline void triggerClusterBeep(){
 
 // ===================== Setup / Loop =====================
 void setup(){
+#if DEBUG_BUTTONS
+  Serial.begin(115200);
+  unsigned long serialStart = millis();
+  while(!Serial && (millis() - serialStart < 2000)){
+    delay(10);
+  }
+  Serial.println("[BTN] Serial button debugging enabled");
+#endif
   loadPersistState();
   resetMinMaxValues();
   g_lastBacklightPct = 255;
