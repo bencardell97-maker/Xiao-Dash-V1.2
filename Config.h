@@ -27,7 +27,7 @@ namespace CFG {
   constexpr uint32_t ID_ACTUATOR=0x4CD;    // byte 3 (raw)
   constexpr uint32_t ID_HEADLIGHTS=0x401;  // byte 1 (0x50 on)
 
-  constexpr uint32_t SCREEN_REFRESH_MS=100;
+  constexpr uint32_t SCREEN_REFRESH_MS=16.66;
 
   // Soot scaling (no learning)
   constexpr float SOOT_DIV = 14.1f;

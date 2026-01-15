@@ -206,13 +206,14 @@ static inline void decodeOrion0F(const uint8_t* plain, size_t plainLen){
 class VictronScanCallbacks : public NimBLEScanCallbacks {
   void onResult(const NimBLEAdvertisedDevice* dev) override {
     if(!dev->haveManufacturerData()) return;
-    VictronDevCfg cfg{};
-    std::string addr = dev->getAddress().toString();
-    if(!matchDevice(addr, cfg)) return;
+    if(!victronConfigEnabled()) return;
     const std::string& mfg = dev->getManufacturerData();
     if(mfg.size() < 12) return;
     const uint8_t* data = reinterpret_cast<const uint8_t*>(mfg.data());
     if(!(data[0] == (kVictronCompanyId & 0xFF) && data[1] == (kVictronCompanyId >> 8))) return;
+    VictronDevCfg cfg{};
+    std::string addr = dev->getAddress().toString();
+    if(!matchDevice(addr, cfg)) return;
     const size_t o = 2;
     if(data[o + 0] != kVictronRecordInstant) return;
     const uint8_t recordType = data[o + 4];
