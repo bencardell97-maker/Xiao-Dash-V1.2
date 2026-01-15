@@ -15,6 +15,7 @@
 #include "DashTypes.h"
 #include "Persist.h"
 #include "Config.h"
+#include "CanDecode.h"
 #include "UiRenderer.h"
 #include "ValueConversion.h"
 #include "VictronBle.h"
@@ -44,54 +45,12 @@ void drawSniffLive();
 void snifferMaybeCapture(const can_frame& f);
 
 #if DEBUG_BUTTONS
-static const char* btnName(Btn b){
-  switch(b){
-    case BTN_UP: return "UP";
-    case BTN_DOWN: return "DOWN";
-    case BTN_LEFT: return "LEFT";
-    case BTN_RIGHT: return "RIGHT";
-    case BTN_ENTER: return "ENTER";
-    case BTN_CANCEL: return "CANCEL";
-    default: return "NONE";
-  }
-}
-
-static void logButtonEvent(const char* tag, Btn b){
-  Serial.print("[BTN] ");
-  Serial.print(tag);
-  Serial.print(" btn=");
-  Serial.print(btnName(b));
-  Serial.print(" menuState=");
-  Serial.println(menuState);
-}
-
-static void logButtonFrame(const can_frame& f, bool cancel_now, bool up_now, bool down_now, bool left, bool right, bool enter){
-  Serial.print("[BTN] frame id=0x");
-  Serial.print(f.can_id, HEX);
-  Serial.print(" data=");
-  for(uint8_t i=0;i<f.can_dlc && i<8;i++){
-    if(i) Serial.print(' ');
-    Serial.print(f.data[i], HEX);
-  }
-  Serial.print(" states c/u/d/l/r/e=");
-  Serial.print(cancel_now);
-  Serial.print('/');
-  Serial.print(up_now);
-  Serial.print('/');
-  Serial.print(down_now);
-  Serial.print('/');
-  Serial.print(left);
-  Serial.print('/');
-  Serial.print(right);
-  Serial.print('/');
-  Serial.println(enter);
-}
+static const char* btnName(Btn b);
+static void logButtonEvent(const char* tag, Btn b);
+static void logButtonFrame(const can_frame& f, bool cancel_now, bool up_now, bool down_now, bool left, bool right, bool enter);
 #endif
 
 //=====================Xiao Can Expansion Board =================
-
-// === Bring in CAN decoder (expects CFG above) ===
-#include "CanDecode.h"
 
 // ===================== Hardware =====================
 Adafruit_ILI9341 tft(CFG::TFT_CS, CFG::TFT_DC, CFG::TFT_RST);
@@ -130,6 +89,51 @@ unsigned long lastMillis=0, lastDraw=0;
 // ===================== UI state & persistence =====================
 MenuState menuState = UI_MAIN;
 bool inSettings() { return menuState != UI_MAIN; }
+
+#if DEBUG_BUTTONS
+static const char* btnName(Btn b){
+  switch(b){
+    case BTN_UP: return "UP";
+    case BTN_DOWN: return "DOWN";
+    case BTN_LEFT: return "LEFT";
+    case BTN_RIGHT: return "RIGHT";
+    case BTN_ENTER: return "ENTER";
+    case BTN_CANCEL: return "CANCEL";
+    default: return "NONE";
+  }
+}
+
+static void logButtonEvent(const char* tag, Btn b){
+  Serial.print("[BTN] ");
+  Serial.print(tag);
+  Serial.print(" btn=");
+  Serial.print(btnName(b));
+  Serial.print(" menuState=");
+  Serial.println(static_cast<uint8_t>(menuState));
+}
+
+static void logButtonFrame(const can_frame& f, bool cancel_now, bool up_now, bool down_now, bool left, bool right, bool enter){
+  Serial.print("[BTN] frame id=0x");
+  Serial.print(f.can_id, HEX);
+  Serial.print(" data=");
+  for(uint8_t i=0;i<f.can_dlc && i<8;i++){
+    if(i) Serial.print(' ');
+    Serial.print(f.data[i], HEX);
+  }
+  Serial.print(" states c/u/d/l/r/e=");
+  Serial.print(cancel_now);
+  Serial.print('/');
+  Serial.print(up_now);
+  Serial.print('/');
+  Serial.print(down_now);
+  Serial.print('/');
+  Serial.print(left);
+  Serial.print('/');
+  Serial.print(right);
+  Serial.print('/');
+  Serial.println(enter);
+}
+#endif
 
 // ===== Main-UI warnings state & blink =====
 unsigned long uiWarnBlinkMs = 0;
@@ -2460,7 +2464,6 @@ void updateUnitsSel(uint8_t prev, uint8_t now){
 // ===================== Input handling & navigation =====================
 static bool sw_cancel_pressed=false;
 static unsigned long sw_cancel_t0=0;
-static bool suppressNextCancelRelease=false;
 static bool sw_enter_pressed=false;
 static unsigned long sw_enter_t0=0;
 static bool suppressNextEnterRelease=false;
@@ -3250,63 +3253,62 @@ void updateButtonsFromFrame(const can_frame& f){
   }
 #endif
 
-  // Press & hold (2s) enter/exit Settings WHILE holding
-  if(cancel_now && !sw_cancel_pressed){ sw_cancel_pressed=true; sw_cancel_t0=millis(); }
-  if(cancel_now && sw_cancel_pressed){
-    if(millis()-sw_cancel_t0 >= 2000){
-      sw_cancel_pressed=false;
+  // Press & hold (2s) enter Settings WHILE holding (main UI only)
+  if(!inSettings()){
+    if(cancel_now && !sw_cancel_pressed){ sw_cancel_pressed=true; sw_cancel_t0=millis(); }
+    if(cancel_now && sw_cancel_pressed){
+      if(millis()-sw_cancel_t0 >= 2000){
+        sw_cancel_pressed=false;
 #if DEBUG_BUTTONS
-      Serial.println("[BTN] cancel hold -> toggle settings");
+        Serial.println("[BTN] cancel hold -> toggle settings");
 #endif
-      if(inSettings()) navExitSettings(); else navEnterSettings();
-      cancelTapCount=0; suppressNextCancelRelease=true; return;
+        navEnterSettings();
+        cancelTapCount=0;
+        return;
+      }
     }
+  } else {
+    sw_cancel_pressed = false;
   }
 
-  // Short-press release handling (double-tap only in live UI)
-  if(!cancel_now && sw_cancel_pressed){
-    unsigned long held=millis()-sw_cancel_t0;
-    sw_cancel_pressed=false;
-
-    if(suppressNextCancelRelease){ suppressNextCancelRelease=false; return; }
-
-    // if(held < 2000) {
-    if (inSettings()) {
+  // Cancel actions on rising edge
+  if(cancel_now && !sw_cancel_prev){
+    if(inSettings()){
 #if DEBUG_BUTTONS
-      Serial.print("[BTN] cancel release in settings held_ms=");
-      Serial.println(held);
+      Serial.println("[BTN] cancel press in settings");
 #endif
       handleButton(BTN_CANCEL); // Back via Cancel inside menus
     } else {
+      // Double-tap (live UI) triggers on rising edge
       unsigned long now = millis();
       if (cancelTapCount == 0) {
-        cancelTapCount = 1; 
+        cancelTapCount = 1;
         lastCancelTapMs = now;
-      } else {
-        if (now - lastCancelTapMs <= DOUBLE_TAP_MS) {
-          // Go to next screen
+      } else if (now - lastCancelTapMs <= DOUBLE_TAP_MS) {
 #if DEBUG_BUTTONS
-          Serial.print("[BTN] cancel double-tap -> next screen held_ms=");
-          Serial.println(held);
+        Serial.println("[BTN] cancel double-tap -> next screen");
 #endif
-          persist.currentScreen = (persist.currentScreen + 1) % SCREEN_COUNT;       //  No. of screen in rotation
-          dirty = true;
+        persist.currentScreen = (persist.currentScreen + 1) % SCREEN_COUNT;       //  No. of screen in rotation
+        dirty = true;
 
-          // Redraw chrome
-          tft.fillScreen(COL_BG());
-          drawAppBar();
+        // Redraw chrome
+        tft.fillScreen(COL_BG());
+        drawAppBar();
 
-          updateRegenState();
-          renderStatic();
-          renderDynamic();
+        updateRegenState();
+        renderStatic();
+        renderDynamic();
 
-          cancelTapCount = 0;
-        } else {
-          cancelTapCount = 1; 
-          lastCancelTapMs = now;
-        }
+        cancelTapCount = 0;
+      } else {
+        cancelTapCount = 1;
+        lastCancelTapMs = now;
       }
     }
+  }
+
+  if(!cancel_now && sw_cancel_pressed){
+    sw_cancel_pressed=false;
   }
 
   // Expire single tap window
