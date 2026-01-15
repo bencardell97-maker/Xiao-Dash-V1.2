@@ -36,6 +36,10 @@
   #define DEBUG_BUTTONS 1
 #endif
 
+#ifndef DEBUG_CAN
+  #define DEBUG_CAN 1
+#endif
+
 // Forward declarations for functions referenced before their definitions
 void redrawForDimmingChange();
 // ==== CAN Sniffer: forward declarations ====
@@ -81,6 +85,15 @@ uint8_t g_lockByteRaw3 = 0;
 
 // ===== Victron BLE (Instant Readout) =====
 static VictronReadings g_victronReadings{};
+static unsigned long lastVictronPollMs = 0;
+constexpr unsigned long kVictronPollIntervalMs = 200;
+
+#if DEBUG_CAN
+static uint32_t g_canOverflowCount = 0;
+static uint32_t g_canOverflowReported = 0;
+static unsigned long lastCanOverflowReportMs = 0;
+constexpr unsigned long kCanOverflowReportIntervalMs = 1000;
+#endif
 
 
 // ===================== Timing =====================
@@ -3477,29 +3490,39 @@ void setup(){
 
 void loop(){
   unsigned long now=millis();
-  g_victronReadings = victronLoop();
+  if(can_irq){
+    can_irq=false;
+  }
+  struct can_frame f;
+  while(mcp.readMessage(&f)==MCP2515::ERROR_OK){
+    CanDec::decodeFrame(f);
+    updateButtonsFromFrame(f);
+    snifferMaybeCapture(f);
+    obd2MaybeCapture(f);
+  }
+#if DEBUG_CAN
+  uint8_t eflg = mcp.getErrorFlags();
+  if(eflg & (EFLG_RX0OVR | EFLG_RX1OVR)){
+    g_canOverflowCount++;
+    mcp.clearRXnOVR();
+  }
+  if(g_canOverflowCount != g_canOverflowReported
+     && now - lastCanOverflowReportMs >= kCanOverflowReportIntervalMs){
+    Serial.print("[CAN] RX overflow count=");
+    Serial.print(g_canOverflowCount);
+    Serial.print(" eflg=0x");
+    Serial.println(eflg, HEX);
+    g_canOverflowReported = g_canOverflowCount;
+    lastCanOverflowReportMs = now;
+  }
+#endif
+
+  if(now - lastVictronPollMs >= kVictronPollIntervalMs){
+    g_victronReadings = victronLoop();
+    lastVictronPollMs = now;
+  }
   if(g_webServerActive){
     webServer.handleClient();
-  }
-
-  if(can_irq){
-    can_irq=false; struct can_frame f;
-    while(mcp.readMessage(&f)==MCP2515::ERROR_OK){
-      CanDec::decodeFrame(f);
-      updateButtonsFromFrame(f);
-      snifferMaybeCapture(f);
-      obd2MaybeCapture(f);
-
-    }
-  } else {
-    struct can_frame f;
-    if(mcp.readMessage(&f)==MCP2515::ERROR_OK){
-      CanDec::decodeFrame(f);
-      updateButtonsFromFrame(f);
-      snifferMaybeCapture(f);
-      obd2MaybeCapture(f);
-
-    }
   }
 
   // Regen banner update
