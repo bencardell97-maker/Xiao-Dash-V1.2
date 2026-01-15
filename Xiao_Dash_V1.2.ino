@@ -30,6 +30,10 @@
   #define RGB565(r,g,b) ( (((r)&0xF8)<<8) | (((g)&0xFC)<<3) | ((b)>>3) )
 #endif
 
+#ifndef BUTTON_DEBUG
+  #define BUTTON_DEBUG 1
+#endif
+
 // Forward declarations for functions referenced before their definitions
 void redrawForDimmingChange();
 // ==== CAN Sniffer: forward declarations ====
@@ -2393,6 +2397,9 @@ static bool suppressNextCancelRelease=false;
 static bool sw_enter_pressed=false;
 static unsigned long sw_enter_t0=0;
 static bool suppressNextEnterRelease=false;
+#if BUTTON_DEBUG
+static bool sw_cancel_prev=false;
+#endif
 
 // Double-tap cancel for page cycling (live UI)
 static uint8_t cancelTapCount = 0;
@@ -2410,8 +2417,88 @@ static bool sw_up_prev=false, sw_down_prev=false, sw_left_prev=false, sw_right_p
 
 inline bool bitSetSafe(const can_frame& f,uint8_t byteIdx,uint8_t bit){ if(bit>7||f.can_dlc<=byteIdx) return false; return (f.data[byteIdx]&(1u<<bit))!=0; }
 
+#if BUTTON_DEBUG
+static const char* buttonName(Btn b){
+  switch(b){
+    case BTN_UP: return "UP";
+    case BTN_DOWN: return "DOWN";
+    case BTN_LEFT: return "LEFT";
+    case BTN_RIGHT: return "RIGHT";
+    case BTN_ENTER: return "ENTER";
+    case BTN_CANCEL: return "CANCEL";
+    default: return "NONE";
+  }
+}
+
+static const char* menuStateName(MenuState s){
+  switch(s){
+    case UI_MAIN: return "UI_MAIN";
+    case MENU_ROOT: return "MENU_ROOT";
+    case MENU_LAYOUT: return "MENU_LAYOUT";
+    case MENU_LAYOUT_PICK_SLOT: return "MENU_LAYOUT_PICK_SLOT";
+    case MENU_LAYOUT_PICK_GAUGE: return "MENU_LAYOUT_PICK_GAUGE";
+    case MENU_WARN_LIST: return "MENU_WARN_LIST";
+    case MENU_WARN_EDIT: return "MENU_WARN_EDIT";
+    case MENU_COLOURS: return "MENU_COLOURS";
+    case MENU_COLOURS_CUSTOM: return "MENU_COLOURS_CUSTOM";
+    case MENU_COLOURS_CUSTOM_PICK: return "MENU_COLOURS_CUSTOM_PICK";
+    case MENU_SYSTEM: return "MENU_SYSTEM";
+    case MENU_BRIGHTNESS: return "MENU_BRIGHTNESS";
+    case MENU_UNITS: return "MENU_UNITS";
+    case MENU_WIFI: return "MENU_WIFI";
+    case MENU_CAN_SNIFF: return "MENU_CAN_SNIFF";
+    case MENU_FACTORY_RESET_CONFIRM: return "MENU_FACTORY_RESET_CONFIRM";
+    case MENU_SPEED_TRIM: return "MENU_SPEED_TRIM";
+    case MENU_OBD2: return "MENU_OBD2";
+    case MENU_OBD2_ACTION: return "MENU_OBD2_ACTION";
+    default: return "UNKNOWN";
+  }
+}
+
+static void logButtonDispatch(Btn b){
+  Serial.print(F("[BTN] handleButton="));
+  Serial.print(buttonName(b));
+  Serial.print(F(" menu="));
+  Serial.println(menuStateName(menuState));
+}
+
+static void logButtonStateSnapshot(bool cancel_now, bool left, bool right, bool enter){
+  Serial.print(F("[BTN] states cancel="));
+  Serial.print(cancel_now);
+  Serial.print(F(" up="));
+  Serial.print(up_now);
+  Serial.print(F(" down="));
+  Serial.print(down_now);
+  Serial.print(F(" left="));
+  Serial.print(left);
+  Serial.print(F(" right="));
+  Serial.print(right);
+  Serial.print(F(" enter="));
+  Serial.print(enter);
+  Serial.print(F(" menu="));
+  Serial.println(menuStateName(menuState));
+}
+
+static void logButtonFrame(const can_frame& f){
+  Serial.print(F("[BTN] frame id=0x"));
+  Serial.print(f.can_id, HEX);
+  Serial.print(F(" dlc="));
+  Serial.print(f.can_dlc);
+  Serial.print(F(" data="));
+  for(uint8_t i=0;i<f.can_dlc && i<8;i++){
+    if(i) Serial.print(' ');
+    if(f.data[i] < 16) Serial.print('0');
+    Serial.print(f.data[i], HEX);
+  }
+  Serial.println();
+}
+#endif
+
 // Enter/exit settings
 void navEnterSettings(){
+#if BUTTON_DEBUG
+  Serial.println(F("[BTN] navEnterSettings"));
+#endif
   menuState = MENU_ROOT;
   menuIndex = g_lastRootIndex;
   menuIndex2 = 0;
@@ -2420,6 +2507,9 @@ void navEnterSettings(){
 }
 // ===================== Navigation =====================
 void navExitSettings(){
+#if BUTTON_DEBUG
+  Serial.println(F("[BTN] navExitSettings"));
+#endif
   menuState = UI_MAIN;
 
   // Make sure regenState reflects the latest regen_pct before drawing the title
@@ -2694,6 +2784,9 @@ void redrawForDimmingChange(){
 
 // ===================== Buttons handler and nav =====================
 void handleButton(Btn b){
+#if BUTTON_DEBUG
+  logButtonDispatch(b);
+#endif
   switch(menuState){
 
     case MENU_ROOT:{
@@ -3166,11 +3259,25 @@ void updateButtonsFromFrame(const can_frame& f){
   down_now = bitSetSafe(f,6,0);
   bool left = bitSetSafe(f,7,4), right=bitSetSafe(f,7,2), enter=bitSetSafe(f,7,6);
 
+#if BUTTON_DEBUG
+  logButtonFrame(f);
+  bool stateChange = (cancel_now != sw_cancel_prev) || (up_now != sw_up_prev) || (down_now != sw_down_prev)
+    || (left != sw_left_prev) || (right != sw_right_prev) || (enter != sw_enter_prev);
+  if(stateChange){
+    logButtonStateSnapshot(cancel_now, left, right, enter);
+  }
+  sw_cancel_prev = cancel_now;
+#endif
+
   // Press & hold (2s) enter/exit Settings WHILE holding
   if(cancel_now && !sw_cancel_pressed){ sw_cancel_pressed=true; sw_cancel_t0=millis(); }
   if(cancel_now && sw_cancel_pressed){
     if(millis()-sw_cancel_t0 >= 2000){
       sw_cancel_pressed=false;
+#if BUTTON_DEBUG
+      Serial.print(F("[BTN] cancel hold -> toggle settings, held_ms="));
+      Serial.println(millis() - sw_cancel_t0);
+#endif
       if(inSettings()) navExitSettings(); else navEnterSettings();
       cancelTapCount=0; suppressNextCancelRelease=true; return;
     }
@@ -3180,6 +3287,13 @@ void updateButtonsFromFrame(const can_frame& f){
   if(!cancel_now && sw_cancel_pressed){
     unsigned long held=millis()-sw_cancel_t0;
     sw_cancel_pressed=false;
+
+#if BUTTON_DEBUG
+    Serial.print(F("[BTN] cancel release held_ms="));
+    Serial.print(held);
+    Serial.print(F(" inSettings="));
+    Serial.println(inSettings());
+#endif
 
     if(suppressNextCancelRelease){ suppressNextCancelRelease=false; return; }
 
@@ -3191,6 +3305,9 @@ void updateButtonsFromFrame(const can_frame& f){
       if (cancelTapCount == 0) {
         cancelTapCount = 1; 
         lastCancelTapMs = now;
+#if BUTTON_DEBUG
+        Serial.println(F("[BTN] cancel tap start"));
+#endif
       } else {
         if (now - lastCancelTapMs <= DOUBLE_TAP_MS) {
           // Go to next screen
@@ -3206,16 +3323,27 @@ void updateButtonsFromFrame(const can_frame& f){
           renderDynamic();
 
           cancelTapCount = 0;
+#if BUTTON_DEBUG
+          Serial.println(F("[BTN] cancel double-tap -> next screen"));
+#endif
         } else {
           cancelTapCount = 1; 
           lastCancelTapMs = now;
+#if BUTTON_DEBUG
+          Serial.println(F("[BTN] cancel tap restart"));
+#endif
         }
       }
     }
   }
 
   // Expire single tap window
-  if(cancelTapCount==1 && (millis() - lastCancelTapMs > DOUBLE_TAP_MS)) cancelTapCount = 0;
+  if(cancelTapCount==1 && (millis() - lastCancelTapMs > DOUBLE_TAP_MS)){
+    cancelTapCount = 0;
+#if BUTTON_DEBUG
+    Serial.println(F("[BTN] cancel tap window expired"));
+#endif
+  }
 
   // Enter hold for min/max display (main UI only)
   if(menuState == UI_MAIN){
@@ -3228,6 +3356,9 @@ void updateButtonsFromFrame(const can_frame& f){
         setMinMaxActive(true);
         enterTapCount = 0;
         suppressNextEnterRelease = true;
+#if BUTTON_DEBUG
+        Serial.println(F("[BTN] enter hold -> min/max active"));
+#endif
       }
     }
     if(!enter && sw_enter_pressed){
@@ -3235,6 +3366,9 @@ void updateButtonsFromFrame(const can_frame& f){
       if(uiMinMaxActive){
         setMinMaxActive(false);
         suppressNextEnterRelease = true;
+#if BUTTON_DEBUG
+        Serial.println(F("[BTN] enter release -> min/max inactive"));
+#endif
       }
       if(suppressNextEnterRelease){
         suppressNextEnterRelease = false;
@@ -3243,29 +3377,68 @@ void updateButtonsFromFrame(const can_frame& f){
         if(enterTapCount == 0){
           enterTapCount = 1;
           lastEnterTapMs = now;
+#if BUTTON_DEBUG
+          Serial.println(F("[BTN] enter tap start"));
+#endif
         } else if(now - lastEnterTapMs <= ENTER_TAP_MS){
           enterTapCount++;
           lastEnterTapMs = now;
           if(enterTapCount >= 3){
             resetMinMaxValues();
             enterTapCount = 0;
+#if BUTTON_DEBUG
+            Serial.println(F("[BTN] enter triple-tap -> reset min/max"));
+#endif
           }
         } else {
           enterTapCount = 1;
           lastEnterTapMs = now;
+#if BUTTON_DEBUG
+          Serial.println(F("[BTN] enter tap restart"));
+#endif
         }
       }
     }
 
-    if(enterTapCount > 0 && (millis() - lastEnterTapMs > ENTER_TAP_MS)) enterTapCount = 0;
+    if(enterTapCount > 0 && (millis() - lastEnterTapMs > ENTER_TAP_MS)){
+      enterTapCount = 0;
+#if BUTTON_DEBUG
+      Serial.println(F("[BTN] enter tap window expired"));
+#endif
+    }
   }
 
   // Edge-triggered dispatch
-  if(up_now && !sw_up_prev) handleButton(BTN_UP);
-  if(down_now && !sw_down_prev) handleButton(BTN_DOWN);
-  if(left && !sw_left_prev) handleButton(BTN_LEFT);
-  if(right && !sw_right_prev) handleButton(BTN_RIGHT);
-  if(enter && !sw_enter_prev) handleButton(BTN_ENTER);
+  if(up_now && !sw_up_prev){
+#if BUTTON_DEBUG
+    Serial.println(F("[BTN] edge UP"));
+#endif
+    handleButton(BTN_UP);
+  }
+  if(down_now && !sw_down_prev){
+#if BUTTON_DEBUG
+    Serial.println(F("[BTN] edge DOWN"));
+#endif
+    handleButton(BTN_DOWN);
+  }
+  if(left && !sw_left_prev){
+#if BUTTON_DEBUG
+    Serial.println(F("[BTN] edge LEFT"));
+#endif
+    handleButton(BTN_LEFT);
+  }
+  if(right && !sw_right_prev){
+#if BUTTON_DEBUG
+    Serial.println(F("[BTN] edge RIGHT"));
+#endif
+    handleButton(BTN_RIGHT);
+  }
+  if(enter && !sw_enter_prev){
+#if BUTTON_DEBUG
+    Serial.println(F("[BTN] edge ENTER"));
+#endif
+    handleButton(BTN_ENTER);
+  }
   sw_up_prev=up_now; sw_down_prev=down_now; sw_left_prev=left; sw_right_prev=right; sw_enter_prev=enter;
 }
 
@@ -3323,6 +3496,15 @@ void setup(){
   loadPersistState();
   resetMinMaxValues();
   g_lastBacklightPct = 255;
+
+#if BUTTON_DEBUG
+  Serial.begin(115200);
+  unsigned long serialStart = millis();
+  while(!Serial && (millis() - serialStart < 2000)){
+    delay(10);
+  }
+  Serial.println(F("[BTN] Serial debug enabled"));
+#endif
 
   // Ensure CS lines idle high before SPI
   pinMode(CFG::TFT_CS,OUTPUT); digitalWrite(CFG::TFT_CS,HIGH);
